@@ -46,6 +46,77 @@ fn low_mask(bits: u32) -> u64 {
 }
 
 impl<'a, T> CombinationIter<'a, T> {
+    /// Fills `buf` with the next combination, returning `true` if one was
+    /// produced. The buffer is cleared before each call, so callers can
+    /// reuse the same `Vec` across iterations to avoid repeated allocation.
+    pub fn next_into(&mut self, buf: &mut Vec<&'a T>) -> bool {
+        buf.clear();
+        match &mut self.state {
+            State::Bitmask {
+                current,
+                limit,
+                done,
+            } => {
+                if *done {
+                    return false;
+                }
+
+                let v = *current;
+
+                let mut bits = v;
+                while bits != 0 {
+                    let i = bits.trailing_zeros();
+                    buf.push(&self.slice[i as usize]);
+                    bits &= bits - 1;
+                }
+
+                if v == 0 {
+                    *done = true;
+                    return true;
+                }
+
+                let t = v | (v - 1);
+                if let Some(t1) = t.checked_add(1) {
+                    let next = t1 | (((!t & t1) - 1) >> (v.trailing_zeros() + 1));
+                    if next > *limit {
+                        *done = true;
+                    } else {
+                        *current = next;
+                    }
+                } else {
+                    *done = true;
+                }
+
+                true
+            }
+            State::Index { indices, done } => {
+                if *done {
+                    return false;
+                }
+
+                let k = indices.len();
+                let n = self.slice.len();
+
+                buf.extend(indices.iter().map(|&i| &self.slice[i]));
+
+                let mut i = k;
+                while i > 0 {
+                    i -= 1;
+                    if indices[i] < n - k + i {
+                        indices[i] += 1;
+                        for j in (i + 1)..k {
+                            indices[j] = indices[j - 1] + 1;
+                        }
+                        return true;
+                    }
+                }
+
+                *done = true;
+                true
+            }
+        }
+    }
+
     fn new(slice: &'a [T], k: usize) -> Self {
         let n = slice.len();
         if n <= 64 {
@@ -94,74 +165,11 @@ impl<'a, T> Iterator for CombinationIter<'a, T> {
     type Item = Vec<&'a T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.state {
-            State::Bitmask {
-                current,
-                limit,
-                done,
-            } => {
-                if *done {
-                    return None;
-                }
-
-                let v = *current;
-
-                // Extract set bits via trailing_zeros (ascending element order).
-                let mut result = Vec::with_capacity(v.count_ones() as usize);
-                let mut bits = v;
-                while bits != 0 {
-                    let i = bits.trailing_zeros();
-                    result.push(&self.slice[i as usize]);
-                    bits &= bits - 1;
-                }
-
-                // k == 0: only combination is the empty set
-                if v == 0 {
-                    *done = true;
-                    return Some(result);
-                }
-
-                // Gosper's hack: next higher number with the same popcount
-                let t = v | (v - 1);
-                if let Some(t1) = t.checked_add(1) {
-                    let next = t1 | (((!t & t1) - 1) >> (v.trailing_zeros() + 1));
-                    if next > *limit {
-                        *done = true;
-                    } else {
-                        *current = next;
-                    }
-                } else {
-                    *done = true;
-                }
-
-                Some(result)
-            }
-            State::Index { indices, done } => {
-                if *done {
-                    return None;
-                }
-
-                let k = indices.len();
-                let n = self.slice.len();
-
-                let result: Vec<&'a T> = indices.iter().map(|&i| &self.slice[i]).collect();
-
-                // Advance: find the rightmost index that can be incremented.
-                let mut i = k;
-                while i > 0 {
-                    i -= 1;
-                    if indices[i] < n - k + i {
-                        indices[i] += 1;
-                        for j in (i + 1)..k {
-                            indices[j] = indices[j - 1] + 1;
-                        }
-                        return Some(result);
-                    }
-                }
-
-                *done = true;
-                Some(result)
-            }
+        let mut buf = Vec::new();
+        if self.next_into(&mut buf) {
+            Some(buf)
+        } else {
+            None
         }
     }
 }
@@ -241,6 +249,18 @@ mod tests {
             .collect();
         assert_eq!(got, [[] as [i32; 0]]);
         assert!(empty.combinations(1).collect::<Vec<_>>().is_empty());
+    }
+
+    #[test]
+    fn next_into_reuses_buffer() {
+        let items = [1, 2, 3];
+        let mut iter = items.combinations(2);
+        let mut buf = Vec::new();
+        let mut got = Vec::new();
+        while iter.next_into(&mut buf) {
+            got.push(buf.iter().map(|&&x| x).collect::<Vec<i32>>());
+        }
+        assert_eq!(got, [[1, 2], [1, 3], [2, 3]]);
     }
 
     #[test]
