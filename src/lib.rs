@@ -1,9 +1,58 @@
 use std::ops::{Bound, RangeBounds};
 
 /// Extension trait providing combination methods on slices.
+///
+/// ```
+/// use combinations::Combinations;
+///
+/// let items = [1, 2, 3, 4];
+///
+/// // All pairs
+/// let pairs: Vec<Vec<&i32>> = items.combinations(2).collect();
+/// assert_eq!(pairs.len(), 6);
+///
+/// // Works on Vec too
+/// let v = vec!["a", "b", "c"];
+/// for combo in v.combinations(2) {
+///     assert_eq!(combo.len(), 2);
+/// }
+/// ```
 pub trait Combinations {
     type Item;
+
+    /// Returns an iterator over all `k`-element combinations.
+    ///
+    /// ```
+    /// use combinations::Combinations;
+    ///
+    /// let items = ["a", "b", "c"];
+    /// let got: Vec<Vec<&&str>> = items.combinations(2).collect();
+    /// assert_eq!(got, [vec![&"a", &"b"], vec![&"a", &"c"], vec![&"b", &"c"]]);
+    ///
+    /// // k=0 yields one empty combination
+    /// assert_eq!(items.combinations(0).count(), 1);
+    ///
+    /// // k > len yields nothing
+    /// assert!(items.combinations(10).next().is_none());
+    /// ```
     fn combinations(&self, k: usize) -> CombinationIter<'_, Self::Item>;
+
+    /// Returns an iterator over combinations of all sizes within `range`.
+    ///
+    /// Accepts any [`RangeBounds<usize>`]: `0..=k`, `1..3`, `..`, etc.
+    /// Combinations are yielded in order of increasing size.
+    ///
+    /// ```
+    /// use combinations::Combinations;
+    ///
+    /// // All subsets of size 1 or 2
+    /// let items = [1, 2, 3];
+    /// let got: Vec<Vec<&i32>> = items.combinations_range(1..=2).collect();
+    /// assert_eq!(got.len(), 6); // C(3,1) + C(3,2) = 3 + 3
+    ///
+    /// // All 2^3 = 8 subsets
+    /// assert_eq!(items.combinations_range(..).count(), 8);
+    /// ```
     fn combinations_range(&self, range: impl RangeBounds<usize>) -> CombinationRangeIter<'_, Self::Item>;
 }
 
@@ -23,6 +72,20 @@ impl<T> Combinations for [T] {
 /// For slices with at most 64 elements, uses a bitmask (Gosper's hack)
 /// internally for faster iteration. Falls back to index-based iteration
 /// for larger slices.
+///
+/// Created by [`Combinations::combinations`].
+///
+/// ```
+/// use combinations::Combinations;
+///
+/// let items = [10, 20, 30];
+/// let mut iter = items.combinations(2);
+///
+/// assert_eq!(iter.next(), Some(vec![&10, &20]));
+/// assert_eq!(iter.next(), Some(vec![&10, &30]));
+/// assert_eq!(iter.next(), Some(vec![&20, &30]));
+/// assert_eq!(iter.next(), None);
+/// ```
 pub struct CombinationIter<'a, T> {
     slice: &'a [T],
     state: State,
@@ -55,6 +118,17 @@ impl<'a, T> CombinationIter<'a, T> {
     /// Fills `buf` with the next combination, returning `true` if one was
     /// produced. The buffer is cleared before each call, so callers can
     /// reuse the same `Vec` across iterations to avoid repeated allocation.
+    ///
+    /// ```
+    /// use combinations::Combinations;
+    ///
+    /// let items = [1, 2, 3];
+    /// let mut iter = items.combinations(2);
+    /// let mut buf = Vec::new();
+    /// while iter.next_into(&mut buf) {
+    ///     println!("{buf:?}"); // no allocation after the first call
+    /// }
+    /// ```
     pub fn next_into(&mut self, buf: &mut Vec<&'a T>) -> bool {
         buf.clear();
         match &mut self.state {
@@ -181,6 +255,21 @@ impl<'a, T> Iterator for CombinationIter<'a, T> {
 }
 
 /// Iterator over combinations of multiple sizes within a range.
+///
+/// Created by [`Combinations::combinations_range`].
+///
+/// ```
+/// use combinations::Combinations;
+///
+/// let items = [1, 2, 3];
+/// let mut iter = items.combinations_range(0..=1);
+///
+/// assert_eq!(iter.next(), Some(vec![]));       // k=0
+/// assert_eq!(iter.next(), Some(vec![&1]));     // k=1
+/// assert_eq!(iter.next(), Some(vec![&2]));
+/// assert_eq!(iter.next(), Some(vec![&3]));
+/// assert_eq!(iter.next(), None);
+/// ```
 pub struct CombinationRangeIter<'a, T> {
     slice: &'a [T],
     current_k: usize,
@@ -218,6 +307,21 @@ impl<'a, T> CombinationRangeIter<'a, T> {
         }
     }
 
+    /// Fills `buf` with the next combination, returning `true` if one was
+    /// produced. See [`CombinationIter::next_into`] for details.
+    ///
+    /// ```
+    /// use combinations::Combinations;
+    ///
+    /// let items = [1, 2, 3];
+    /// let mut iter = items.combinations_range(1..=2);
+    /// let mut buf = Vec::new();
+    /// let mut count = 0;
+    /// while iter.next_into(&mut buf) {
+    ///     count += 1;
+    /// }
+    /// assert_eq!(count, 6); // C(3,1) + C(3,2)
+    /// ```
     pub fn next_into(&mut self, buf: &mut Vec<&'a T>) -> bool {
         loop {
             if self.inner.next_into(buf) {
