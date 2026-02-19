@@ -1,9 +1,12 @@
 [package]
-name = "combinations"
+name = "k-combinations"
 version = "0.1.0"
 edition = "2024"
 description = "Efficient iterator over k-element combinations of a slice"
 license = "MIT"
 repository = "https://github.com/mrcz/combinations"
+
+[lib]
+name = "combinations"
 
 [dependencies]
